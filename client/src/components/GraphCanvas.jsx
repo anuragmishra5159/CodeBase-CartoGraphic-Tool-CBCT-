@@ -272,13 +272,32 @@ const GraphNode = ({ node, mouseX, mouseY, onHover, onClick, isSelected, isDimme
 };
 
 // --- Detailed Tooltip Component ---
-const DetailedNodeTooltip = ({ node }) => {
+// Uses UNIT terminology only - never mentions file/folder/module to user
+const DetailedNodeTooltip = ({ node, onInspectInternals }) => {
   if (!node) return null;
 
-  // Mock data generation based on node props to fulfill user requirements
-  const isFile = node.type === 'file';
-  const role = isFile ? (node.label.match(/Controller|Service|Manager/) ? 'Core Logic' : (node.label.match(/util|helper/) ? 'Utility' : 'Feature Component')) : 'Module Container';
-  const layer = node.path?.includes('components') ? 'UI Layer' : (node.path?.includes('services') ? 'Domain Layer' : 'Application Layer');
+  // Use summary from semantic engine if available, otherwise generate basic info
+  const summary = node.summary || {};
+  const role = summary.role || 'Standard Unit';
+  const description = summary.description || 'A structural unit in the codebase.';
+  const metrics = summary.metrics || {};
+
+  // Layer info (abstracted - doesn't expose internal categorization)
+  const layer = node.path?.includes('components') ? 'Interface' :
+    (node.path?.includes('services') ? 'Logic' : 'Core');
+
+  // Real metrics from semantic engine
+  const fanIn = node.inDegree || metrics.dependedBy || 0;
+  const fanOut = node.outDegree || metrics.dependsOn || 0;
+  const childCount = node.childCount || metrics.internalUnits || 0;
+
+  // Determine fan levels for display
+  const getFanLevel = (count) => {
+    if (count === 0) return 'None';
+    if (count <= 3) return 'Low';
+    if (count <= 7) return 'Medium';
+    return 'High';
+  };
 
   return (
     <motion.div
@@ -297,11 +316,11 @@ const DetailedNodeTooltip = ({ node }) => {
             </div>
             <div>
               <h3 className="text-sm font-bold text-white truncate max-w-[180px]" title={node.label}>{node.label}</h3>
-              <span className="text-xs text-cbct-muted capitalize">{node.type}</span>
+              <span className="text-xs text-cbct-muted">Unit</span>
             </div>
           </div>
           <span className="text-[10px] uppercase font-mono tracking-wider bg-white/5 px-2 py-0.5 rounded text-cbct-muted">
-            {layer.split(' ')[0]}
+            {layer}
           </span>
         </div>
         <div className="text-xs text-cbct-muted/70 font-mono truncate px-1">
@@ -318,41 +337,46 @@ const DetailedNodeTooltip = ({ node }) => {
             <Activity className="w-3 h-3" /> Role & Purpose
           </h4>
           <p className="text-sm text-white/90 leading-relaxed mb-1">{role}</p>
+          <p className="text-xs text-cbct-muted leading-relaxed">{description}</p>
           <div className="flex flex-wrap gap-1.5 mt-2">
-            {['Entry Point', 'Core Logic'].includes(role) && <span className="px-2 py-0.5 rounded bg-green-500/10 text-green-400 text-[10px] border border-green-500/20">Critical</span>}
-            <span className="px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 text-[10px] border border-blue-500/20">Public API</span>
+            {role === 'Core Dependency' && <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 text-[10px] border border-amber-500/20">High Impact</span>}
+            {role === 'Entry Point' && <span className="px-2 py-0.5 rounded bg-green-500/10 text-green-400 text-[10px] border border-green-500/20">Entry</span>}
+            {role === 'Leaf Unit' && <span className="px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 text-[10px] border border-blue-500/20">Safe to Modify</span>}
+            {role === 'Isolated' && <span className="px-2 py-0.5 rounded bg-gray-500/10 text-gray-400 text-[10px] border border-gray-500/20">Isolated</span>}
           </div>
         </div>
 
         {/* Structural Metrics */}
-        <div className="grid grid-cols-2 gap-3">
-          <div className="bg-white/5 rounded-lg p-2 border border-white/5">
-            <span className="block text-[10px] text-cbct-muted uppercase">Fan-In</span>
-            <span className="text-lg font-mono font-medium text-white">Low</span>
+        <div className="grid grid-cols-3 gap-2">
+          <div className="bg-white/5 rounded-lg p-2 border border-white/5 text-center">
+            <span className="block text-[10px] text-cbct-muted uppercase">Depended By</span>
+            <span className="text-lg font-mono font-medium text-white">{fanIn}</span>
           </div>
-          <div className="bg-white/5 rounded-lg p-2 border border-white/5">
-            <span className="block text-[10px] text-cbct-muted uppercase">Fan-Out</span>
-            <span className="text-lg font-mono font-medium text-white">Med</span>
+          <div className="bg-white/5 rounded-lg p-2 border border-white/5 text-center">
+            <span className="block text-[10px] text-cbct-muted uppercase">Depends On</span>
+            <span className="text-lg font-mono font-medium text-white">{fanOut}</span>
           </div>
+          {childCount > 0 && (
+            <div className="bg-white/5 rounded-lg p-2 border border-white/5 text-center">
+              <span className="block text-[10px] text-cbct-muted uppercase">Contains</span>
+              <span className="text-lg font-mono font-medium text-white">{childCount}</span>
+            </div>
+          )}
         </div>
 
         {/* Health Signals */}
         <div>
           <h4 className="flex items-center gap-1.5 text-xs font-bold text-cbct-muted uppercase tracking-wider mb-2">
-            <AlertCircle className="w-3 h-3" /> Health Signals
+            <AlertCircle className="w-3 h-3" /> Connectivity
           </h4>
           <div className="space-y-2">
             <div className="flex justify-between items-center text-xs">
-              <span className="text-cbct-muted">Coupling</span>
-              <div className="flex gap-1">
-                <div className="w-8 h-1.5 rounded-full bg-green-500/50"></div>
-                <div className="w-8 h-1.5 rounded-full bg-white/10"></div>
-                <div className="w-8 h-1.5 rounded-full bg-white/10"></div>
-              </div>
+              <span className="text-cbct-muted">Fan-In</span>
+              <span className={`${fanIn > 5 ? 'text-amber-400' : 'text-white/80'}`}>{getFanLevel(fanIn)}</span>
             </div>
             <div className="flex justify-between items-center text-xs">
-              <span className="text-cbct-muted">Cohesion</span>
-              <span className="text-white/80">Focused</span>
+              <span className="text-cbct-muted">Fan-Out</span>
+              <span className={`${fanOut > 5 ? 'text-amber-400' : 'text-white/80'}`}>{getFanLevel(fanOut)}</span>
             </div>
           </div>
         </div>
@@ -360,20 +384,35 @@ const DetailedNodeTooltip = ({ node }) => {
         {/* Quick Actions */}
         <div className="pt-2 flex gap-2">
           <button className="flex-1 py-1.5 text-xs bg-cbct-accent/10 text-cbct-accent border border-cbct-accent/20 rounded hover:bg-cbct-accent/20 transition-colors">
-            Trace Flow
+            Trace Impact
           </button>
-          <button className="flex-1 py-1.5 text-xs bg-white/5 text-cbct-muted border border-white/10 rounded hover:bg-white/10 hover:text-white transition-colors">
-            Deep Dive
-          </button>
+          {childCount > 0 && (
+            <button
+              onClick={() => onInspectInternals && onInspectInternals(node)}
+              className="flex-1 py-1.5 text-xs bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded hover:bg-purple-500/20 transition-colors"
+            >
+              Inspect Internals
+            </button>
+          )}
         </div>
       </div>
     </motion.div>
   );
 };
 
+
 export default function GraphCanvas() {
   const containerRef = useRef(null);
-  const { graphData, filters, selectedNode, setSelectedNode } = useStore();
+  const {
+    graphData,
+    filters,
+    selectedNode,
+    setSelectedNode,
+    semanticLayer,
+    updateLayerFromZoom,
+    restorePreviousState,
+    focusUnit
+  } = useStore();
 
   // D3 & DOM refs
   const simulationRef = useRef(null);
@@ -389,22 +428,27 @@ export default function GraphCanvas() {
   const [zoom, setZoom] = useState(1);
   const [zoomTransform, setZoomTransform] = useState({ x: 0, y: 0, k: 1 });
 
-  // Zoom functions
+  // Zoom functions with semantic layer integration
   const handleZoomIn = () => {
     const newZoom = Math.min(zoom * 1.2, 3);
     setZoom(newZoom);
     setZoomTransform(prev => ({ ...prev, k: newZoom }));
+    // Update semantic layer based on zoom level
+    updateLayerFromZoom(newZoom);
   };
 
   const handleZoomOut = () => {
     const newZoom = Math.max(zoom / 1.2, 0.1);
     setZoom(newZoom);
     setZoomTransform(prev => ({ ...prev, k: newZoom }));
+    // Update semantic layer based on zoom level
+    updateLayerFromZoom(newZoom);
   };
 
   const handleZoomReset = () => {
     setZoom(1);
     setZoomTransform({ x: 0, y: 0, k: 1 });
+    updateLayerFromZoom(1);
   };
 
   const handleCenter = () => {
@@ -501,8 +545,12 @@ export default function GraphCanvas() {
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-      
+
       switch (e.key) {
+        case 'Escape':
+          e.preventDefault();
+          restorePreviousState();
+          break;
         case '+':
         case '=':
           e.preventDefault();
@@ -537,7 +585,8 @@ export default function GraphCanvas() {
   };
 
   const handleBgClick = () => {
-    setSelectedNode(null);
+    // Restore previous state (focus mode exit)
+    restorePreviousState();
   };
 
   // --- Interaction Helpers ---
@@ -570,7 +619,7 @@ export default function GraphCanvas() {
 
       {/* Visualization Layer */}
       <div className="absolute inset-0">
-        <svg 
+        <svg
           className="absolute inset-0 w-full h-full pointer-events-none overflow-visible z-0"
           style={{ transform: `scale(${zoomTransform.k}) translate(${zoomTransform.x}px, ${zoomTransform.y}px)` }}
         >
@@ -594,7 +643,7 @@ export default function GraphCanvas() {
           </g>
         </svg>
 
-        <div 
+        <div
           className="absolute inset-0 pointer-events-none z-10"
           style={{ transform: `scale(${zoomTransform.k}) translate(${zoomTransform.x}px, ${zoomTransform.y}px)` }}
         >
@@ -639,7 +688,7 @@ export default function GraphCanvas() {
           >
             <ZoomOut className="w-5 h-5 text-white/70 group-hover:text-white transition-colors" />
           </button>
-          
+
           <button
             onClick={handleZoomReset}
             className="p-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 transition-all duration-200 group"
@@ -648,7 +697,7 @@ export default function GraphCanvas() {
           >
             <RotateCcw className="w-5 h-5 text-white/70 group-hover:text-white transition-colors" />
           </button>
-          
+
           <button
             onClick={handleCenter}
             className="p-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 transition-all duration-200 group"
@@ -657,7 +706,7 @@ export default function GraphCanvas() {
           >
             <Target className="w-5 h-5 text-white/70 group-hover:text-white transition-colors" />
           </button>
-          
+
           <button
             onClick={handleZoomIn}
             className="p-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 transition-all duration-200 group"

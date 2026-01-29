@@ -1,6 +1,7 @@
 const fs = require('fs').promises;
 const path = require('path');
 const { getCodeFiles } = require('./repositoryService');
+const semanticLayerEngine = require('./semanticLayerEngine');
 
 // Configuration for analysis
 const ANALYSIS_CONFIG = {
@@ -19,7 +20,7 @@ async function validateRepoPath(repoPath) {
   if (!repoPath || typeof repoPath !== 'string') {
     throw new Error('Repository path is required');
   }
-  
+
   try {
     const stats = await fs.stat(repoPath);
     if (!stats.isDirectory()) {
@@ -75,32 +76,59 @@ function detectLanguageFromExtension(ext) {
  * Analyze dependencies between files
  * Uses chunked parallel processing for large repositories
  * Returns nodes and edges for graph visualization
+ * 
+ * Now integrates with Semantic Layer Engine for adaptive visualization
  */
-async function analyzeDependencies(repoPath, defaultLanguage = 'javascript') {
+async function analyzeDependencies(repoPath, defaultLanguage = 'javascript', useSemanticLayers = true) {
   await validateRepoPath(repoPath);
-  
+
   try {
     const files = await getCodeFiles(repoPath);
-    
+
     if (!files || files.length === 0) {
       return { nodes: [], edges: [], message: 'No code files found in repository' };
     }
-    
+
     console.log(`[Analysis] Starting analysis of ${files.length} files`);
-    
+
+    let rawResult;
+
     // For large repos, use chunked parallel processing
     if (files.length > ANALYSIS_CONFIG.LARGE_REPO_THRESHOLD) {
       console.log(`[Analysis] Large repo detected (${files.length} files), using chunked processing`);
-      return await analyzeInChunks(repoPath, files, defaultLanguage);
+      rawResult = await analyzeInChunks(repoPath, files, defaultLanguage);
+    } else {
+      // For smaller repos, use standard processing
+      rawResult = await analyzeStandard(repoPath, files, defaultLanguage);
     }
-    
-    // For smaller repos, use standard processing
-    return await analyzeStandard(repoPath, files, defaultLanguage);
+
+    // Apply semantic layer processing if enabled
+    if (useSemanticLayers && rawResult.nodes && rawResult.nodes.length > 0) {
+      console.log(`[SemanticLayer] Processing ${rawResult.nodes.length} nodes for semantic visualization`);
+      const semanticData = semanticLayerEngine.processForSemanticLayers(
+        rawResult.nodes,
+        rawResult.edges,
+        files.length
+      );
+
+      // Return semantic layer data with raw data stored for expansion
+      return {
+        nodes: semanticData.nodes,
+        edges: semanticData.edges,
+        metadata: semanticData.metadata,
+        // Store raw data for layer expansion (used by expandUnit API)
+        _rawNodes: rawResult.nodes,
+        _rawEdges: rawResult.edges,
+        stats: rawResult.stats
+      };
+    }
+
+    return rawResult;
   } catch (error) {
     console.error('Analysis failed:', error);
-    return { 
-      nodes: [], 
-      edges: [], 
+    return {
+      nodes: [],
+      edges: [],
       error: error.message,
       details: error.stack
     };
@@ -113,7 +141,7 @@ async function analyzeDependencies(repoPath, defaultLanguage = 'javascript') {
 async function analyzeStandard(repoPath, files, defaultLanguage) {
   const normalizedFiles = files.map(f => normalizeToForward(f));
   const normalizedFilesSet = new Set(normalizedFiles);
-  
+
   const nodes = [];
   const edges = [];
   const nodeMap = new Map();
@@ -142,7 +170,7 @@ async function analyzeStandard(repoPath, files, defaultLanguage) {
     const filePath = path.join(repoPath, files[i]);
     const ext = path.extname(file);
     const language = detectLanguageFromExtension(ext) || defaultLanguage;
-    
+
     const imports = await extractImports(filePath, language);
     const sourceId = nodeMap.get(file);
 
@@ -180,15 +208,15 @@ async function analyzeStandard(repoPath, files, defaultLanguage) {
  */
 async function analyzeInChunks(repoPath, files, defaultLanguage) {
   const startTime = Date.now();
-  
+
   // Pre-normalize all files (needed for cross-chunk import resolution)
   const normalizedFiles = files.map(f => normalizeToForward(f));
   const normalizedFilesSet = new Set(normalizedFiles);
-  
+
   // Create global node mapping first (all files get consistent IDs)
   const globalNodeMap = new Map();
   const allNodes = [];
-  
+
   for (let i = 0; i < files.length; i++) {
     const file = normalizedFiles[i];
     const id = `node_${i}`;
@@ -205,38 +233,38 @@ async function analyzeInChunks(repoPath, files, defaultLanguage) {
     allNodes.push(node);
     globalNodeMap.set(file, id);
   }
-  
+
   // Split files into chunks - dynamic chunk size based on repo size
   const chunkSize = Math.min(500, Math.max(50, Math.floor(files.length / 100)));
   const chunks = createChunks(files, normalizedFiles, chunkSize);
   console.log(`[Analysis] Split into ${chunks.length} chunks of ~${chunkSize} files each (dynamic sizing for ${files.length} total files)`);
-  
+
   // Process chunks in parallel with controlled concurrency
   const allEdges = [];
   const maxParallel = ANALYSIS_CONFIG.MAX_PARALLEL_CHUNKS;
-  
+
   for (let i = 0; i < chunks.length; i += maxParallel) {
     const batch = chunks.slice(i, i + maxParallel);
     const batchNum = Math.floor(i / maxParallel) + 1;
     const totalBatches = Math.ceil(chunks.length / maxParallel);
-    
+
     console.log(`[Analysis] Processing batch ${batchNum}/${totalBatches} (${batch.length} chunks in parallel)`);
-    
+
     const chunkResults = await Promise.all(
-      batch.map((chunk, idx) => 
+      batch.map((chunk, idx) =>
         processChunk(
-          repoPath, 
-          chunk, 
-          globalNodeMap, 
-          normalizedFiles, 
-          normalizedFilesSet, 
+          repoPath,
+          chunk,
+          globalNodeMap,
+          normalizedFiles,
+          normalizedFilesSet,
           defaultLanguage,
           i + idx + 1,
           chunks.length
         )
       )
     );
-    
+
     // Collect edges from all chunks
     for (const result of chunkResults) {
       if (result.edges && result.edges.length > 0) {
@@ -244,18 +272,18 @@ async function analyzeInChunks(repoPath, files, defaultLanguage) {
       }
     }
   }
-  
+
   // Deduplicate edges (in case of any cross-chunk duplicates)
   const uniqueEdges = deduplicateEdges(allEdges);
-  
+
   // Calculate metrics on the merged result
   calculateNodeMetrics(allNodes, uniqueEdges);
-  
+
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   console.log(`[Analysis] Completed: ${allNodes.length} nodes, ${uniqueEdges.length} edges in ${elapsed}s`);
-  
-  return { 
-    nodes: allNodes, 
+
+  return {
+    nodes: allNodes,
     edges: uniqueEdges,
     stats: {
       totalFiles: files.length,
@@ -270,7 +298,7 @@ async function analyzeInChunks(repoPath, files, defaultLanguage) {
  */
 function createChunks(files, normalizedFiles, chunkSize) {
   const chunks = [];
-  
+
   for (let i = 0; i < files.length; i += chunkSize) {
     const end = Math.min(i + chunkSize, files.length);
     chunks.push({
@@ -282,7 +310,7 @@ function createChunks(files, normalizedFiles, chunkSize) {
       fileCount: end - i
     });
   }
-  
+
   return chunks;
 }
 
@@ -292,34 +320,34 @@ function createChunks(files, normalizedFiles, chunkSize) {
 async function processChunk(repoPath, chunk, globalNodeMap, allNormalizedFiles, allFilesSet, defaultLanguage, chunkNum, totalChunks) {
   const chunkEdges = [];
   const edgeSet = new Set(); // For fast duplicate detection within chunk
-  
+
   console.log(`[Chunk ${chunkNum}/${totalChunks}] Processing ${chunk.fileCount} files...`);
   const startTime = Date.now();
-  
+
   for (let i = 0; i < chunk.files.length; i++) {
     const file = chunk.normalizedFiles[i];
     const originalFile = chunk.files[i];
     const filePath = path.join(repoPath, originalFile);
     const ext = path.extname(file);
     const language = detectLanguageFromExtension(ext) || defaultLanguage;
-    
+
     try {
       const imports = await extractImports(filePath, language);
       const sourceId = globalNodeMap.get(file);
-      
+
       if (!sourceId) continue;
-      
+
       for (const imp of imports) {
         // Resolve against ALL files in repo (not just this chunk)
         const resolvedImport = resolveImport(file, imp, allNormalizedFiles, allFilesSet, language);
-        
+
         if (resolvedImport) {
           const normalizedResolved = normalizeToForward(resolvedImport);
           const targetId = globalNodeMap.get(normalizedResolved);
-          
+
           if (targetId && sourceId !== targetId) {
             const edgeKey = `${sourceId}->${targetId}`;
-            
+
             if (!edgeSet.has(edgeKey)) {
               edgeSet.add(edgeKey);
               chunkEdges.push({
@@ -337,10 +365,10 @@ async function processChunk(repoPath, chunk, globalNodeMap, allNormalizedFiles, 
       console.warn(`[Chunk ${chunkNum}] Failed to process ${originalFile}: ${err.message}`);
     }
   }
-  
+
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   console.log(`[Chunk ${chunkNum}/${totalChunks}] Done: ${chunkEdges.length} edges found in ${elapsed}s`);
-  
+
   return {
     chunkId: chunk.id,
     edges: chunkEdges,
@@ -354,7 +382,7 @@ async function processChunk(repoPath, chunk, globalNodeMap, allNormalizedFiles, 
 function deduplicateEdges(edges) {
   const seen = new Set();
   const unique = [];
-  
+
   for (const edge of edges) {
     const key = `${edge.source}->${edge.target}`;
     if (!seen.has(key)) {
@@ -362,7 +390,7 @@ function deduplicateEdges(edges) {
       unique.push(edge);
     }
   }
-  
+
   return unique;
 }
 
@@ -372,12 +400,12 @@ function deduplicateEdges(edges) {
 function calculateNodeMetrics(nodes, edges) {
   const inDegree = {};
   const outDegree = {};
-  
+
   for (const edge of edges) {
     outDegree[edge.source] = (outDegree[edge.source] || 0) + 1;
     inDegree[edge.target] = (inDegree[edge.target] || 0) + 1;
   }
-  
+
   for (const node of nodes) {
     node.inDegree = inDegree[node.id] || 0;
     node.outDegree = outDegree[node.id] || 0;
@@ -393,10 +421,10 @@ async function extractImports(filePath, language) {
     // Check file size first to skip huge files
     const stats = await fs.stat(filePath);
     if (stats.size > ANALYSIS_CONFIG.MAX_FILE_SIZE_KB * 1024) {
-      console.log(`[Analysis] Skipping large file (${(stats.size/1024).toFixed(0)}KB): ${path.basename(filePath)}`);
+      console.log(`[Analysis] Skipping large file (${(stats.size / 1024).toFixed(0)}KB): ${path.basename(filePath)}`);
       return [];
     }
-    
+
     const content = await fs.readFile(filePath, 'utf-8');
     const imports = [];
 
@@ -434,14 +462,14 @@ async function extractImports(filePath, language) {
       while ((match = importRegex.exec(content)) !== null) {
         const importPath = match[1];
         // Filter out standard library imports - keep only project-specific imports
-        if (!importPath.startsWith('java.') && 
-            !importPath.startsWith('javax.') &&
-            !importPath.startsWith('kotlin.') &&
-            !importPath.startsWith('kotlinx.') &&
-            !importPath.startsWith('android.') &&
-            !importPath.startsWith('androidx.') &&
-            !importPath.startsWith('org.junit') &&
-            !importPath.startsWith('org.jetbrains')) {
+        if (!importPath.startsWith('java.') &&
+          !importPath.startsWith('javax.') &&
+          !importPath.startsWith('kotlin.') &&
+          !importPath.startsWith('kotlinx.') &&
+          !importPath.startsWith('android.') &&
+          !importPath.startsWith('androidx.') &&
+          !importPath.startsWith('org.junit') &&
+          !importPath.startsWith('org.jetbrains')) {
           imports.push(importPath);
         }
       }
@@ -484,21 +512,21 @@ function resolveImport(sourceFile, importPath, normalizedAllFiles, normalizedFil
     // Standard path.join might introduce backslashes on Windows
     let resolved;
     if (importPath.startsWith('/')) {
-        resolved = importPath.substring(1); // Treat as relative to root? Or keep absolute? Usually 'src/foo'
+      resolved = importPath.substring(1); // Treat as relative to root? Or keep absolute? Usually 'src/foo'
     } else {
-        // Handle relative path navigation
-        const parts = sourceDir.split('/').filter(Boolean);
-        const relParts = importPath.split('/').filter(Boolean);
-        
-        for (const part of relParts) {
-            if (part === '.') continue;
-            if (part === '..') {
-                parts.pop();
-            } else {
-                parts.push(part);
-            }
+      // Handle relative path navigation
+      const parts = sourceDir.split('/').filter(Boolean);
+      const relParts = importPath.split('/').filter(Boolean);
+
+      for (const part of relParts) {
+        if (part === '.') continue;
+        if (part === '..') {
+          parts.pop();
+        } else {
+          parts.push(part);
         }
-        resolved = parts.join('/');
+      }
+      resolved = parts.join('/');
     }
 
     // Try different extensions and index files
@@ -535,9 +563,9 @@ function resolveImport(sourceFile, importPath, normalizedAllFiles, normalizedFil
   }
 
   for (const cand of candidates) {
-      if (normalizedFilesSet.has(cand)) return cand;
+    if (normalizedFilesSet.has(cand)) return cand;
   }
-  
+
   // Try suffix matching as fallback (least optimized part, but less frequent)
   for (const f of normalizedAllFiles) {
     for (const cand of candidates) {
@@ -565,27 +593,27 @@ function resolveImport(sourceFile, importPath, normalizedAllFiles, normalizedFil
 function resolvePackageImport(importPath, allFiles) {
   // allFiles is normalized
   const pathFromPackage = importPath.replace(/\./g, '/');
-  
+
   const extensions = ['.kt', '.java', '.kts'];
-  
+
   for (const file of allFiles) {
     for (const ext of extensions) {
       const expectedEnding = pathFromPackage + ext;
       if (file.endsWith(expectedEnding)) {
         return file;
       }
-      
+
       const className = importPath.split('.').pop();
       // file uses forward slashes
       if (file.endsWith('/' + className + ext)) {
         // Simple heuristic check
         if (file.includes(pathFromPackage.split('/').pop())) {
-             return file;
+          return file;
         }
       }
     }
   }
-  
+
   return null;
 }
 
@@ -596,32 +624,32 @@ function resolvePythonImport(sourceFile, importPath, allFiles, fileSet) {
   // sourceFile is normalized, allFiles is normalized
   let cleanPath = importPath.replace(/^\.+/, '');
   const pathFromImport = cleanPath.replace(/\./g, '/');
-  
+
   const sourceDir = sourceFile.split('/').slice(0, -1).join('/');
   const dotCount = (importPath.match(/^\.*/) || [''])[0].length;
-  
+
   let baseParts = sourceDir.split('/');
   for (let i = 1; i < dotCount; i++) {
     baseParts.pop();
   }
-  
+
   const baseDir = baseParts.join('/');
   const relativePath = baseDir ? (baseDir + '/' + pathFromImport) : pathFromImport;
-  
+
   const candidates = [
     relativePath + '.py',
     relativePath + '/__init__.py',
     pathFromImport + '.py',
     pathFromImport + '/__init__.py'
   ];
-  
+
   for (const candidate of candidates) {
     if (fileSet && fileSet.has(candidate)) return candidate;
     if (allFiles.includes(candidate)) {
       return candidate;
     }
   }
-  
+
   return null;
 }
 
@@ -630,7 +658,7 @@ function resolvePythonImport(sourceFile, importPath, allFiles, fileSet) {
  */
 function getFileType(file) {
   const name = path.basename(file).toLowerCase();
-  
+
   if (name.includes('.test.') || name.includes('.spec.')) return 'test';
   if (name.includes('.config.') || name === 'config.js') return 'config';
   if (name.includes('component') || name.endsWith('.jsx') || name.endsWith('.tsx')) return 'component';
@@ -640,7 +668,7 @@ function getFileType(file) {
   if (name.includes('route')) return 'route';
   if (name.includes('model') || name.includes('schema')) return 'model';
   if (name === 'index.js' || name === 'index.ts') return 'entry';
-  
+
   return 'module';
 }
 
@@ -649,40 +677,40 @@ function getFileType(file) {
  */
 async function analyzeComplexity(repoPath) {
   await validateRepoPath(repoPath);
-  
+
   const files = await getCodeFiles(repoPath);
-  
+
   if (!files || files.length === 0) {
     return { files: [], summary: { totalFiles: 0, avgComplexity: 0, mostComplex: [], leastComplex: [] } };
   }
-  
+
   console.log(`[Complexity] Analyzing ${files.length} files`);
   const startTime = Date.now();
-  
+
   // Process in chunks for large repos - dynamic chunk size
   const chunkSize = Math.min(500, Math.max(50, Math.floor(files.length / 100)));
   const complexityData = [];
-  
+
   for (let i = 0; i < files.length; i += chunkSize) {
     const chunk = files.slice(i, Math.min(i + chunkSize, files.length));
     const chunkNum = Math.floor(i / chunkSize) + 1;
     const totalChunks = Math.ceil(files.length / chunkSize);
-    
+
     if (files.length > ANALYSIS_CONFIG.LARGE_REPO_THRESHOLD) {
       console.log(`[Complexity] Processing chunk ${chunkNum}/${totalChunks}`);
     }
-    
+
     // Process chunk files in parallel (batch of promises)
     const chunkResults = await Promise.all(
       chunk.map(file => analyzeFileComplexity(repoPath, file))
     );
-    
+
     // Collect non-null results
     for (const result of chunkResults) {
       if (result) complexityData.push(result);
     }
   }
-  
+
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   console.log(`[Complexity] Completed in ${elapsed}s`);
 
@@ -693,7 +721,7 @@ async function analyzeComplexity(repoPath) {
     files: complexityData,
     summary: {
       totalFiles: complexityData.length,
-      avgComplexity: complexityData.length > 0 
+      avgComplexity: complexityData.length > 0
         ? Math.round(complexityData.reduce((sum, f) => sum + f.complexityScore, 0) / complexityData.length)
         : 0,
       mostComplex: complexityData.slice(0, 5),
@@ -713,10 +741,10 @@ async function analyzeFileComplexity(repoPath, file) {
     if (stats.size > ANALYSIS_CONFIG.MAX_FILE_SIZE_KB * 1024) {
       return null; // Skip large files
     }
-    
+
     const content = await fs.readFile(filePath, 'utf-8');
     const lines = content.split('\n');
-    
+
     // Simple complexity metrics
     const metrics = {
       file,
@@ -730,8 +758,8 @@ async function analyzeFileComplexity(repoPath, file) {
 
     // Calculate complexity score (simplified)
     metrics.complexityScore = Math.round(
-      (metrics.conditionals * 2) + 
-      (metrics.loops * 2) + 
+      (metrics.conditionals * 2) +
+      (metrics.loops * 2) +
       (metrics.functions * 1) +
       (metrics.lines / 50)
     );
@@ -747,12 +775,12 @@ async function analyzeFileComplexity(repoPath, file) {
  */
 async function analyzeCentrality(repoPath) {
   const { nodes, edges } = await analyzeDependencies(repoPath);
-  
+
   // Calculate centrality metrics
   const centrality = nodes.map(node => {
     const dependsOn = edges.filter(e => e.source === node.id).length;
     const dependedBy = edges.filter(e => e.target === node.id).length;
-    
+
     return {
       ...node,
       dependsOn,
@@ -787,7 +815,7 @@ async function analyzeCentrality(repoPath) {
 async function getModuleInsights(repoPath, nodeId) {
   const { nodes, edges } = await analyzeDependencies(repoPath);
   const node = nodes.find(n => n.id === nodeId);
-  
+
   if (!node) {
     return { error: 'Node not found' };
   }
@@ -804,19 +832,19 @@ async function getModuleInsights(repoPath, nodeId) {
 
   // Generate observational insights (non-judgmental)
   const observations = [];
-  
+
   if (dependedBy.length > 5) {
     observations.push(`This file is referenced by ${dependedBy.length} other files.`);
   }
-  
+
   if (dependsOn.length > 10) {
     observations.push(`This file depends on ${dependsOn.length} other files.`);
   }
-  
+
   if (dependedBy.length === 0 && dependsOn.length === 0) {
     observations.push('This file has no detected connections to other files.');
   }
-  
+
   if (dependedBy.length > 0 && dependsOn.length === 0) {
     observations.push('This file is a leaf node - it provides functionality without dependencies.');
   }
@@ -829,9 +857,61 @@ async function getModuleInsights(repoPath, nodeId) {
   };
 }
 
+/**
+ * Expand a unit to show its internals (for Layer 2+ transitions)
+ */
+async function expandUnit(repoPath, unitId, depth = 1) {
+  // Get raw dependency data
+  const rawResult = await analyzeDependencies(repoPath, 'javascript', false);
+
+  // Find the unit in semantic data
+  const semanticData = semanticLayerEngine.processForSemanticLayers(
+    rawResult.nodes,
+    rawResult.edges,
+    rawResult.nodes.length
+  );
+
+  const unit = semanticData.nodes.find(u => u.id === unitId);
+
+  if (!unit) {
+    return { error: 'Unit not found', nodes: [], edges: [] };
+  }
+
+  // Expand the unit using semantic layer engine
+  const expanded = semanticLayerEngine.expandUnit(
+    unit,
+    rawResult.nodes,
+    rawResult.edges,
+    depth
+  );
+
+  return expanded;
+}
+
+/**
+ * Get impact chain for a unit (for Layer 3 - Impact & Risk)
+ */
+async function getUnitImpact(repoPath, unitId) {
+  const rawResult = await analyzeDependencies(repoPath, 'javascript', false);
+
+  const semanticData = semanticLayerEngine.processForSemanticLayers(
+    rawResult.nodes,
+    rawResult.edges,
+    rawResult.nodes.length
+  );
+
+  return semanticLayerEngine.getImpactChain(
+    unitId,
+    semanticData.nodes,
+    semanticData.edges
+  );
+}
+
 module.exports = {
   analyzeDependencies,
   analyzeComplexity,
   analyzeCentrality,
-  getModuleInsights
+  getModuleInsights,
+  expandUnit,
+  getUnitImpact
 };

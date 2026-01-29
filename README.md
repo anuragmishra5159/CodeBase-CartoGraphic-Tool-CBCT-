@@ -58,6 +58,27 @@ cbct/
 
 ## 🗺️ Features
 
+### 🎯 Semantic Layer Engine (NEW!)
+
+CBCT features an **adaptive visualization system** that automatically adjusts to repository size while maintaining a consistent user experience:
+
+- **4 Semantic Layers**: Progressive disclosure from overview to detail
+  - Layer 1: Orientation (high-level overview)
+  - Layer 2: Structural (connections and relationships)
+  - Layer 3: Impact & Risk (dependency chains and risk indicators)
+  - Layer 4: Detail (full file-level analysis)
+
+- **Adaptive Unit Selection**: Automatically chooses the right abstraction level
+  - Small repos (< 80 files): File-based units
+  - Medium repos (80-500 files): Folder-based units
+  - Large repos (≥ 500 files): Semantic cluster units
+
+- **Consistent UX**: Same interaction model regardless of repository size
+- **Performance Optimized**: Safety limits prevent UI overload
+- **Risk Detection**: Identifies circular dependencies, high-impact units, and potential issues
+
+📚 **[Read the Semantic Layer Guide](./SEMANTIC_LAYER_GUIDE.md)** | **[Quick Reference](./SEMANTIC_LAYER_QUICK_REF.md)**
+
 ### View Modes
 
 1. **Dependencies** - Visualize file imports and connections
@@ -70,6 +91,7 @@ cbct/
 - **Cognitive Onboarding** - Where should I start? What matters most?
 - **Architectural Intuition** - Notice tight coupling, hub modules, chokepoints
 - **Shared Understanding** - Neutral visual reference for team discussions
+- **Impact Analysis** - Understand what will be affected by changes
 
 ## 🛠️ Tech Stack
 
@@ -93,10 +115,12 @@ cbct/
 |----------|--------|-------------|
 | `/api/repository/scan` | POST | Scan a repository |
 | `/api/repository/tree` | GET | Get file tree structure |
-| `/api/analysis/dependencies` | POST | Analyze file dependencies |
+| `/api/analysis/dependencies` | POST | Analyze file dependencies (with semantic layers) |
 | `/api/analysis/complexity` | POST | Analyze code complexity |
 | `/api/analysis/centrality` | POST | Analyze module centrality |
 | `/api/analysis/insights/:nodeId` | GET | Get insights for a specific node |
+| `/api/analysis/expand` | POST | Expand a unit to show internals (Layer 2+) |
+| `/api/analysis/impact` | POST | Get impact chain for a unit (Layer 3) |
 
 ## 🎨 Design Principles
 

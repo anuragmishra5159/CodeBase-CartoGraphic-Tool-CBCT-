@@ -39,8 +39,8 @@ export const api = {
   },
 
   async getNodeInsights(path, nodeId) {
-    const response = await client.get(`/analysis/insights/${nodeId}`, { 
-      params: { path } 
+    const response = await client.get(`/analysis/insights/${nodeId}`, {
+      params: { path }
     });
     return response.data;
   },
@@ -72,15 +72,15 @@ export const api = {
   },
 
   async getMostUsedNodes(path, limit = 10) {
-    const response = await client.get('/graph/analysis/most-used', { 
-      params: { path, limit } 
+    const response = await client.get('/graph/analysis/most-used', {
+      params: { path, limit }
     });
     return response.data;
   },
 
   async getMostDependentNodes(path, limit = 10) {
-    const response = await client.get('/graph/analysis/most-dependent', { 
-      params: { path, limit } 
+    const response = await client.get('/graph/analysis/most-dependent', {
+      params: { path, limit }
     });
     return response.data;
   },
@@ -110,9 +110,21 @@ export const api = {
     return response.data;
   },
 
+  // Semantic Layer endpoints
+  async expandUnit(path, unitId, depth = 1) {
+    const response = await client.post('/analysis/expand', { path, unitId, depth });
+    return response.data;
+  },
+
+  async getUnitImpact(path, unitId) {
+    const response = await client.post('/analysis/impact', { path, unitId });
+    return response.data;
+  },
+
   // Health check
   async healthCheck() {
     const response = await client.get('/health');
     return response.data;
   }
 };
+

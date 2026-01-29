@@ -1,19 +1,21 @@
 const express = require('express');
 const router = express.Router();
-const { 
-  analyzeDependencies, 
+const {
+  analyzeDependencies,
   analyzeComplexity,
   analyzeCentrality,
-  getModuleInsights 
+  getModuleInsights,
+  expandUnit,
+  getUnitImpact
 } = require('../services/analysisService');
 
 // POST /api/analysis/dependencies - Analyze file dependencies
 router.post('/dependencies', async (req, res) => {
   try {
     const { path, language } = req.body;
-    
+
     console.log('[Analysis] Dependencies request for path:', path);
-    
+
     if (!path) {
       return res.status(400).json({ error: 'Repository path is required' });
     }
@@ -43,7 +45,7 @@ router.post('/dependencies', async (req, res) => {
 router.post('/complexity', async (req, res) => {
   try {
     const { path } = req.body;
-    
+
     if (!path) {
       return res.status(400).json({ error: 'Repository path is required' });
     }
@@ -60,7 +62,7 @@ router.post('/complexity', async (req, res) => {
 router.post('/centrality', async (req, res) => {
   try {
     const { path } = req.body;
-    
+
     if (!path) {
       return res.status(400).json({ error: 'Repository path is required' });
     }
@@ -78,7 +80,7 @@ router.get('/insights/:nodeId', async (req, res) => {
   try {
     const { nodeId } = req.params;
     const { path } = req.query;
-    
+
     const insights = await getModuleInsights(path, nodeId);
     res.json(insights);
   } catch (error) {
@@ -87,4 +89,39 @@ router.get('/insights/:nodeId', async (req, res) => {
   }
 });
 
+// POST /api/analysis/expand - Expand a unit to show its internals (Layer 2+)
+router.post('/expand', async (req, res) => {
+  try {
+    const { path, unitId, depth } = req.body;
+
+    if (!path || !unitId) {
+      return res.status(400).json({ error: 'Repository path and unitId are required' });
+    }
+
+    const expanded = await expandUnit(path, unitId, depth || 1);
+    res.json(expanded);
+  } catch (error) {
+    console.error('Error expanding unit:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/analysis/impact - Get impact chain for a unit (Layer 3)
+router.post('/impact', async (req, res) => {
+  try {
+    const { path, unitId } = req.body;
+
+    if (!path || !unitId) {
+      return res.status(400).json({ error: 'Repository path and unitId are required' });
+    }
+
+    const impact = await getUnitImpact(path, unitId);
+    res.json(impact);
+  } catch (error) {
+    console.error('Error getting unit impact:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = router;
+
