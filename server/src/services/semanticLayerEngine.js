@@ -21,8 +21,8 @@ const MAX_DETAIL_NODES = 150;
  * Determine repository size category (INTERNAL ONLY - never expose to user)
  */
 function getRepoSizeCategory(fileCount) {
-  if (fileCount < SMALL_REPO_THRESHOLD) return 'small';
-  if (fileCount < MEDIUM_REPO_THRESHOLD) return 'medium';
+  if (fileCount < 80) return 'small';
+  if (fileCount < 500) return 'medium';
   return 'large';
 }
 
@@ -47,16 +47,13 @@ function getRevealDepth(sizeCategory) {
  */
 function selectUnits(nodes, edges, fileCount) {
   const sizeCategory = getRepoSizeCategory(fileCount);
-  
-  switch (sizeCategory) {
-    case 'small':
-      return selectFileUnits(nodes, edges);
-    case 'medium':
-      return selectFolderUnits(nodes, edges);
-    case 'large':
-      return selectSemanticClusters(nodes, edges);
-    default:
-      return selectFolderUnits(nodes, edges);
+
+  if (sizeCategory === 'small') {
+    return selectFileUnits(nodes, edges);
+  } else if (sizeCategory === 'medium') {
+    return selectFolderUnits(nodes, edges);
+  } else {
+    return selectSemanticClusters(nodes, edges);
   }
 }
 
@@ -64,9 +61,7 @@ function selectUnits(nodes, edges, fileCount) {
  * Small repos: Each file is a unit
  */
 function selectFileUnits(nodes, edges) {
-  // For small repos, files are units directly
-  // Limit to MAX_INITIAL_UNITS for Layer 1
-  const units = nodes.slice(0, MAX_INITIAL_UNITS).map(node => ({
+  const units = nodes.map(node => ({
     ...node,
     unitType: 'file',
     isUnit: true,
@@ -74,13 +69,19 @@ function selectFileUnits(nodes, edges) {
     childCount: 0
   }));
 
+  // Sort by connectivity to show most important nodes first
+  const sortedUnits = units.sort((a, b) =>
+    ((b.inDegree + b.outDegree) || 0) - ((a.inDegree + a.outDegree) || 0)
+  );
+  const limitedUnits = sortedUnits.slice(0, MAX_INITIAL_UNITS);
+
   // Filter edges to only include visible units
-  const unitIds = new Set(units.map(u => u.id));
-  const unitEdges = edges.filter(e => 
+  const unitIds = new Set(limitedUnits.map(u => u.id));
+  const unitEdges = edges.filter(e =>
     unitIds.has(e.source) && unitIds.has(e.target)
   );
 
-  return { units, edges: unitEdges, totalUnits: nodes.length };
+  return { units: limitedUnits, edges: unitEdges, totalUnits: nodes.length };
 }
 
 /**
@@ -89,7 +90,7 @@ function selectFileUnits(nodes, edges) {
 function selectFolderUnits(nodes, edges) {
   // Group nodes by their parent directory
   const folderMap = new Map();
-  
+
   nodes.forEach(node => {
     const dir = node.directory || getParentDirectory(node.path || node.id);
     if (!folderMap.has(dir)) {
@@ -118,11 +119,11 @@ function selectFolderUnits(nodes, edges) {
   edges.forEach(edge => {
     const sourceNode = nodes.find(n => n.id === edge.source);
     const targetNode = nodes.find(n => n.id === edge.target);
-    
+
     if (sourceNode && targetNode) {
       const sourceDir = sourceNode.directory || getParentDirectory(sourceNode.path || sourceNode.id);
       const targetDir = targetNode.directory || getParentDirectory(targetNode.path || targetNode.id);
-      
+
       if (sourceDir !== targetDir) {
         const edgeKey = `folder:${sourceDir}->folder:${targetDir}`;
         if (!edgeSet.has(edgeKey)) {
@@ -132,7 +133,7 @@ function selectFolderUnits(nodes, edges) {
             target: `folder:${targetDir}`,
             weight: 1
           });
-          
+
           // Update degrees
           const sourceFolder = folderMap.get(sourceDir);
           const targetFolder = folderMap.get(targetDir);
@@ -140,7 +141,7 @@ function selectFolderUnits(nodes, edges) {
           if (targetFolder) targetFolder.inDegree++;
         } else {
           // Increment weight for existing edge
-          const existingEdge = folderEdges.find(e => 
+          const existingEdge = folderEdges.find(e =>
             e.source === `folder:${sourceDir}` && e.target === `folder:${targetDir}`
           );
           if (existingEdge) existingEdge.weight++;
@@ -149,15 +150,20 @@ function selectFolderUnits(nodes, edges) {
     }
   });
 
-  const units = Array.from(folderMap.values()).slice(0, MAX_INITIAL_UNITS);
-  
-  return { 
-    units, 
+  // Sort by connectivity to prioritize hubs
+  const sortedUnits = Array.from(folderMap.values()).sort((a, b) =>
+    ((b.inDegree + b.outDegree) || 0) - ((a.inDegree + a.outDegree) || 0)
+  );
+
+  const limitedUnits = sortedUnits.slice(0, MAX_INITIAL_UNITS);
+
+  return {
+    units: limitedUnits,
     edges: folderEdges.filter(e => {
-      const unitIds = new Set(units.map(u => u.id));
+      const unitIds = new Set(limitedUnits.map(u => u.id));
       return unitIds.has(e.source) && unitIds.has(e.target);
     }),
-    totalUnits: folderMap.size 
+    totalUnits: folderMap.size
   };
 }
 
@@ -169,7 +175,7 @@ function selectSemanticClusters(nodes, edges) {
   // Build adjacency list for clustering
   const adjacency = new Map();
   nodes.forEach(node => adjacency.set(node.id, new Set()));
-  
+
   edges.forEach(edge => {
     if (adjacency.has(edge.source)) {
       adjacency.get(edge.source).add(edge.target);
@@ -221,7 +227,7 @@ function selectSemanticClusters(nodes, edges) {
       // Create new cluster
       const clusterId = `cluster:${clusterIndex}`;
       const dir = node.directory || getParentDirectory(node.path || node.id);
-      
+
       clusters.set(clusterIndex, {
         id: clusterId,
         label: `Module ${clusterIndex + 1}`,
@@ -245,7 +251,7 @@ function selectSemanticClusters(nodes, edges) {
   // Improve cluster labels based on common paths
   clusters.forEach(cluster => {
     if (cluster.children.length > 0) {
-      const dirs = cluster.children.map(n => 
+      const dirs = cluster.children.map(n =>
         n.directory || getParentDirectory(n.path || n.id)
       );
       const commonDir = findCommonPath(dirs);
@@ -262,12 +268,12 @@ function selectSemanticClusters(nodes, edges) {
   edges.forEach(edge => {
     const sourceCluster = nodeToCluster.get(edge.source);
     const targetCluster = nodeToCluster.get(edge.target);
-    
+
     if (sourceCluster !== undefined && targetCluster !== undefined && sourceCluster !== targetCluster) {
       const sourceId = `cluster:${sourceCluster}`;
       const targetId = `cluster:${targetCluster}`;
       const edgeKey = `${sourceId}->${targetId}`;
-      
+
       if (!edgeSet.has(edgeKey)) {
         edgeSet.add(edgeKey);
         clusterEdges.push({
@@ -275,7 +281,7 @@ function selectSemanticClusters(nodes, edges) {
           target: targetId,
           weight: 1
         });
-        
+
         // Update degrees
         if (clusters.has(sourceCluster)) clusters.get(sourceCluster).outDegree++;
         if (clusters.has(targetCluster)) clusters.get(targetCluster).inDegree++;
@@ -286,13 +292,18 @@ function selectSemanticClusters(nodes, edges) {
     }
   });
 
-  const units = Array.from(clusters.values()).slice(0, MAX_INITIAL_UNITS);
-  const unitIds = new Set(units.map(u => u.id));
+  // Sort by connectivity to prioritize hubs
+  const sortedUnits = Array.from(clusters.values()).sort((a, b) =>
+    ((b.inDegree + b.outDegree) || 0) - ((a.inDegree + a.outDegree) || 0)
+  );
 
-  return { 
-    units, 
+  const limitedUnits = sortedUnits.slice(0, MAX_INITIAL_UNITS);
+  const unitIds = new Set(limitedUnits.map(u => u.id));
+
+  return {
+    units: limitedUnits,
     edges: clusterEdges.filter(e => unitIds.has(e.source) && unitIds.has(e.target)),
-    totalUnits: clusters.size 
+    totalUnits: clusters.size
   };
 }
 
@@ -305,11 +316,11 @@ function expandUnit(unit, allNodes, allEdges, depth = 1) {
   }
 
   let expandedNodes = [...unit.children];
-  
+
   // For deeper expansion, include connected nodes up to depth
   if (depth > 1) {
     const nodeIds = new Set(expandedNodes.map(n => n.id));
-    
+
     for (let d = 1; d < depth; d++) {
       const newNodes = [];
       allEdges.forEach(edge => {
@@ -337,7 +348,7 @@ function expandUnit(unit, allNodes, allEdges, depth = 1) {
 
   // Filter edges for expanded nodes
   const nodeIds = new Set(expandedNodes.map(n => n.id));
-  const expandedEdges = allEdges.filter(e => 
+  const expandedEdges = allEdges.filter(e =>
     nodeIds.has(e.source) && nodeIds.has(e.target)
   );
 
@@ -380,7 +391,7 @@ function getImpactChain(unitId, units, edges, maxDepth = 3) {
 
   // Detect risk indicators
   const unit = units.find(u => u.id === unitId);
-  
+
   // High fan-out risk
   if (downstream.size > 10) {
     riskIndicators.push({
@@ -475,7 +486,7 @@ function findCommonPath(paths) {
 
   const splitPaths = paths.map(p => (p || '').split('/'));
   const minLength = Math.min(...splitPaths.map(p => p.length));
-  
+
   let common = [];
   for (let i = 0; i < minLength; i++) {
     const segment = splitPaths[0][i];
@@ -485,7 +496,7 @@ function findCommonPath(paths) {
       break;
     }
   }
-  
+
   return common.join('/');
 }
 
@@ -496,7 +507,7 @@ function applySafetyLimits(nodes, edges) {
   // Never show more than MAX_VISIBLE_NODES
   const limitedNodes = nodes.slice(0, MAX_VISIBLE_NODES);
   const nodeIds = new Set(limitedNodes.map(n => n.id));
-  const limitedEdges = edges.filter(e => 
+  const limitedEdges = edges.filter(e =>
     nodeIds.has(e.source) && nodeIds.has(e.target)
   );
 
@@ -510,16 +521,18 @@ function applySafetyLimits(nodes, edges) {
 function processForSemanticLayers(rawNodes, rawEdges, fileCount) {
   const sizeCategory = getRepoSizeCategory(fileCount);
   const revealDepth = getRevealDepth(sizeCategory);
-  
+
   // Select units based on repo size
   const { units, edges, totalUnits } = selectUnits(rawNodes, rawEdges, fileCount);
-  
+
   // Apply safety limits
   const { nodes: safeUnits, edges: safeEdges } = applySafetyLimits(units, edges);
-  
+
   // Generate summaries for each unit
   const unitsWithSummaries = safeUnits.map(unit => ({
     ...unit,
+    label: unit.label || unit.name || 'Unit',
+    type: 'unit', // Force universal type for UI
     summary: generateUnitSummary(unit, safeEdges)
   }));
 
@@ -527,7 +540,7 @@ function processForSemanticLayers(rawNodes, rawEdges, fileCount) {
     // Visible data for Layer 1
     nodes: unitsWithSummaries,
     edges: safeEdges,
-    
+
     // Metadata (internal - used by client for layer transitions)
     metadata: {
       totalUnits,
@@ -537,7 +550,7 @@ function processForSemanticLayers(rawNodes, rawEdges, fileCount) {
       maxDetailNodes: MAX_DETAIL_NODES,
       maxInitialUnits: MAX_INITIAL_UNITS
     },
-    
+
     // Raw data stored for expansion (internal use)
     _internal: {
       allNodes: rawNodes,
@@ -555,7 +568,7 @@ module.exports = {
   generateUnitSummary,
   applySafetyLimits,
   processForSemanticLayers,
-  
+
   // Constants exported for testing
   SMALL_REPO_THRESHOLD,
   MEDIUM_REPO_THRESHOLD,

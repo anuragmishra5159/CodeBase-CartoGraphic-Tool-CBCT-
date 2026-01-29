@@ -24,6 +24,18 @@ The engine automatically selects the appropriate unit type based on repository s
 
 ---
 
+## ⌨️ Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `Esc` | Restore previous state / Exit focus |
+| `+` or `=` | Zoom in |
+| `-` | Zoom out |
+| `0` | Reset zoom |
+| `C` | Center view |
+
+---
+
 ## 📊 The 4 Semantic Layers
 
 The system progressively reveals information through 4 semantic layers, triggered by zoom level and user interaction:
@@ -481,11 +493,8 @@ Potential improvements to the semantic layer system:
 ---
 
 ## 📚 Additional Resources
-
-- [Architecture Diagrams](./ARCHITECTURE_DIAGRAMS.md)
-- [API Documentation](./F0_F1_CLIENT_INTEGRATION.md)
-- [Testing Guide](./F0_F1_TESTING_GUIDE.md)
-- [Quick Start](./F0_F1_QUICK_START.md)
+- [Architecture Guide](./ARCHITECTURE.md)
+- [Development Guide](./DEVELOPMENT.md)
 
 ---
 

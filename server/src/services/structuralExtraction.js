@@ -56,6 +56,9 @@ function getLanguageFromExtension(ext) {
     '.xml': 'xml',
     '.html': 'html',
     '.htm': 'html',
+    '.dart': 'dart',
+    '.hs': 'haskell',
+    '.lhs': 'haskell',
   };
   return extMap[ext] || 'unknown';
 }
@@ -78,8 +81,8 @@ function getFileType(filePath, extension) {
   }
 
   // Configuration
-  if (/^(config|\.config|configuration|webpack|babel|tsconfig|vite|rollup)/i.test(path.basename(filePath)) || 
-      /\.(config|rc)\.(js|ts|json)$/i.test(filePath)) {
+  if (/^(config|\.config|configuration|webpack|babel|tsconfig|vite|rollup)/i.test(path.basename(filePath)) ||
+    /\.(config|rc)\.(js|ts|json)$/i.test(filePath)) {
     return 'config';
   }
 
@@ -94,8 +97,8 @@ function getFileType(filePath, extension) {
   }
 
   // Routes
-  if (/(route|routing|router|pages)\.(js|ts|jsx|tsx)$/i.test(pathLower) || 
-      /^routes?\//i.test(pathLower)) {
+  if (/(route|routing|router|pages)\.(js|ts|jsx|tsx)$/i.test(pathLower) ||
+    /^routes?\//i.test(pathLower)) {
     return 'route';
   }
 
@@ -207,7 +210,7 @@ function resolveModulePath(importPath, fromDir, rootPath) {
 
   // Try different extensions
   const extensions = ['', '.js', '.ts', '.jsx', '.tsx', '.mjs', '.cjs', '/index.js', '/index.ts', '/index.jsx', '/index.tsx'];
-  
+
   for (const ext of extensions) {
     const candidate = resolvedPath + ext;
     // Check if within root path (prevent escape)
@@ -297,6 +300,9 @@ function getGlobPatterns() {
     '**/*.yaml',
     '**/*.yml',
     '**/*.xml',
+    '**/*.dart',
+    '**/*.hs',
+    '**/*.lhs',
   ];
 }
 
@@ -352,7 +358,7 @@ async function extractRepositoryStructure(repoPath) {
     };
 
     const files = await glob(patterns, globOptions);
-    
+
     if (!files || files.length === 0) {
       return {
         nodes: [],
@@ -453,7 +459,7 @@ async function extractAllDependencies(repoPath, nodes) {
         // Only create edge if target is a known file
         if (knownPaths.has(depPath)) {
           const edgeKey = `${node.id}->${nodes.find(n => n.path === depPath)?.id}`;
-          
+
           if (!edgeSet.has(edgeKey)) {
             edges.push({
               source: node.id,

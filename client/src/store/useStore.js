@@ -19,6 +19,7 @@ export const useStore = create((set, get) => ({
     expandedUnits: [],      // Units that have been expanded
     previousState: null,    // For restoring on escape/background click
     revealDepth: 3,         // Based on repo size (set from metadata)
+    isLayerLocked: false    // NEW: Prevents zoom from changing layer
   },
 
   // Filter state
@@ -28,8 +29,11 @@ export const useStore = create((set, get) => ({
     directories: [],     // e.g., ['src', 'components']
     hubFiles: [],        // e.g., ['app.js','index.js'] - files that act as central hubs
     connectionStatus: 'all', // 'all' | 'connected' | 'orphan'
-    nodeType: 'all',     // 'all' | 'unit' (UI uses UNIT terminology only)
-    searchQuery: ''      // text search for unit names
+    searchQuery: '',      // text search for unit names
+    minComplexity: 0,    // filter by complexity score
+    minCentrality: 0,    // filter by centrality score
+    semanticRoles: [],    // filter by node role (e.g., 'Core Dependency')
+    excludePatterns: []   // array of regex strings to exclude
   },
 
   // UI state
@@ -37,6 +41,11 @@ export const useStore = create((set, get) => ({
   error: null,
   viewMode: 'dependencies', // 'dependencies' | 'complexity' | 'centrality'
   selectedNode: null,
+  multiSelectNodes: [], // Array of node IDs for pathfinding
+  activePath: [],       // Calculated path (node IDs)
+  gitChurnData: {},      // File path -> modification count
+  prChangedFiles: [],    // Array of file paths changed in current branch
+  forbiddenLinks: [],     // Array of { source, target } ids for guardrails
 
   // Semantic Layer Actions
   setSemanticLayer: (layer) => {
@@ -45,22 +54,38 @@ export const useStore = create((set, get) => ({
       semanticLayer: {
         ...current,
         previousState: { ...current },
-        currentLayer: layer
+        currentLayer: layer,
+        isLayerLocked: true // Manually selecting a layer locks it
       }
     });
   },
 
-  focusUnit: (unit) => {
+  unlockLayer: () => {
+    const current = get().semanticLayer;
+    set({
+      semanticLayer: {
+        ...current,
+        isLayerLocked: false
+      }
+    });
+  },
+
+  focusUnit: (unit, targetLayer = 2) => {
     const current = get().semanticLayer;
     set({
       semanticLayer: {
         ...current,
         previousState: { ...current },
         focusedUnit: unit,
-        currentLayer: unit ? 2 : 1  // Auto-transition to Layer 2 on focus
+        currentLayer: unit ? targetLayer : 1
       },
       selectedNode: unit
     });
+
+    // If transitioning to Layer 4, auto-expand
+    if (unit && targetLayer === 4) {
+      get().expandUnit(unit);
+    }
   },
 
   expandUnit: async (unit) => {
@@ -107,40 +132,34 @@ export const useStore = create((set, get) => ({
 
   restorePreviousState: () => {
     const current = get().semanticLayer;
-    if (current.previousState) {
-      set({
-        semanticLayer: current.previousState,
-        selectedNode: current.previousState.focusedUnit
-      });
-    } else {
-      // Default to Layer 1 orientation
-      set({
-        semanticLayer: {
-          ...current,
-          currentLayer: 1,
-          focusedUnit: null
-        },
-        selectedNode: null
-      });
-    }
+    set({
+      semanticLayer: {
+        ...current,
+        currentLayer: 1,
+        focusedUnit: null,
+        isLayerLocked: false
+      },
+      selectedNode: null
+    });
   },
 
-  // Zoom-to-layer mapping
+  // Zoom-to-layer mapping (Universal Semantic)
   updateLayerFromZoom: (zoomLevel) => {
+    const current = get().semanticLayer;
+    if (current.isLayerLocked) return;
+
     let newLayer = 1;
-    if (zoomLevel < 0.5) {
-      newLayer = 1;  // Zoomed out = Orientation
-    } else if (zoomLevel < 1.2) {
-      newLayer = 2;  // Normal = Structural
-    } else if (zoomLevel < 2.0) {
-      newLayer = 3;  // Zoomed in = Impact
+    if (zoomLevel < 0.6) {
+      newLayer = 1;  // Zoom out -> Orientation
+    } else if (zoomLevel < 1.4) {
+      newLayer = 2;  // Normal -> Structural
+    } else if (zoomLevel < 2.5) {
+      newLayer = 3;  // Zoom in -> Impact
     } else {
-      // Layer 4 requires explicit action, not just zoom
-      newLayer = 3;
+      newLayer = 4;  // Max zoom reveals Detail Analysis
     }
 
-    const current = get().semanticLayer;
-    if (current.currentLayer !== newLayer && newLayer <= 3) {
+    if (current.currentLayer !== newLayer) {
       set({
         semanticLayer: {
           ...current,
@@ -153,9 +172,108 @@ export const useStore = create((set, get) => ({
   // Actions
   setSelectedNode: (node) => {
     set({ selectedNode: node });
-    // Also update focusedUnit for semantic layer consistency
-    if (node) {
-      get().focusUnit(node);
+
+    // SMART NAVIGATION: 
+    // Only auto-switch to Layer 2 (Structural) if we are currently in Layer 1 (Orientation).
+    // If we are in Layer 3 (Impact) or Layer 4 (Detail), we want to stay in that mode 
+    // while we explore different nodes.
+    if (node && get().semanticLayer.currentLayer === 1) {
+      get().focusUnit(node, 2);
+    } else if (node) {
+      // Just update the focused unit but keep the current layer
+      const current = get().semanticLayer;
+      set({
+        semanticLayer: {
+          ...current,
+          focusedUnit: node
+        }
+      });
+
+      // If we are in Layer 4, we might need to auto-expand the new selection
+      if (current.currentLayer === 4) {
+        get().expandUnit(node);
+      }
+    }
+  },
+
+  toggleMultiSelect: (nodeId) => {
+    const { multiSelectNodes } = get();
+    let newSelection;
+    if (multiSelectNodes.includes(nodeId)) {
+      newSelection = multiSelectNodes.filter(id => id !== nodeId);
+    } else {
+      newSelection = [...multiSelectNodes, nodeId].slice(-2); // Limit to 2 for pathfinding
+    }
+    set({ multiSelectNodes: newSelection });
+
+    if (newSelection.length === 2) {
+      get().calculatePath(newSelection[0], newSelection[1]);
+    } else {
+      set({ activePath: [] });
+    }
+  },
+
+  calculatePath: (startId, endId) => {
+    const { graphData } = get();
+    if (!graphData) return;
+
+    const nodes = graphData.nodes;
+    const links = graphData.edges;
+
+    // BFS for shortest path
+    const queue = [[startId]];
+    const visited = new Set([startId]);
+
+    while (queue.length > 0) {
+      const path = queue.shift();
+      const node = path[path.length - 1];
+
+      if (node === endId) {
+        set({ activePath: path });
+        return;
+      }
+
+      // Find neighbors (links are source -> target)
+      // Check both directions for pathfinding connectivity
+      const neighbors = links
+        .filter(l => l.source === node || l.target === node)
+        .map(l => l.source === node ? l.target : l.source);
+
+      for (const neighbor of neighbors) {
+        if (!visited.has(neighbor)) {
+          visited.add(neighbor);
+          queue.push([...path, neighbor]);
+        }
+      }
+    }
+
+    set({ activePath: [] }); // No path found
+  },
+
+  clearSelection: () => {
+    set({ multiSelectNodes: [], activePath: [] });
+  },
+
+  fetchGitIntelligence: async (path) => {
+    try {
+      const [churn, impact] = await Promise.all([
+        api.getGitChurn(path),
+        api.getPRImpact(path)
+      ]);
+      set({ gitChurnData: churn, prChangedFiles: impact });
+    } catch (error) {
+      console.warn('[Store] Git intelligence failed:', error.message);
+    }
+  },
+
+  toggleForbiddenLink: (sourceId, targetId) => {
+    const { forbiddenLinks } = get();
+    const exists = forbiddenLinks.find(l => l.source === sourceId && l.target === targetId);
+
+    if (exists) {
+      set({ forbiddenLinks: forbiddenLinks.filter(l => !(l.source === sourceId && l.target === targetId)) });
+    } else {
+      set({ forbiddenLinks: [...forbiddenLinks, { source: sourceId, target: targetId }] });
     }
   },
 
@@ -188,11 +306,16 @@ export const useStore = create((set, get) => ({
           focusedUnit: null,
           expandedUnits: [],
           previousState: null,
-          revealDepth
+          revealDepth,
+          isLayerLocked: false // Ensure this is preserved/reset
         }
       });
 
       set({ isLoading: false });
+
+      // Automatically trigger secondary analytics
+      get().fetchGitIntelligence(effectivePath);
+      get().loadComplexityData();
     } catch (error) {
       set({
         error: error.message || 'Failed to load repository',
@@ -253,7 +376,8 @@ export const useStore = create((set, get) => ({
         focusedUnit: null,
         expandedUnits: [],
         previousState: null,
-        revealDepth: 3
+        revealDepth: 3,
+        isLayerLocked: false
       },
       filters: {
         extensions: [],
@@ -298,6 +422,16 @@ export const useStore = create((set, get) => ({
     });
   },
 
+  toggleSemanticRole: (role) => {
+    set(state => {
+      const current = state.filters.semanticRoles;
+      const newRoles = current.includes(role)
+        ? current.filter(r => r !== role)
+        : [...current, role];
+      return { filters: { ...state.filters, semanticRoles: newRoles } };
+    });
+  },
+
   clearFilters: () => {
     set({
       filters: {
@@ -307,7 +441,11 @@ export const useStore = create((set, get) => ({
         hubFiles: [],
         connectionStatus: 'all',
         nodeType: 'all',
-        searchQuery: ''
+        searchQuery: '',
+        minComplexity: 0,
+        minCentrality: 0,
+        semanticRoles: [],
+        excludePatterns: []
       }
     });
   },

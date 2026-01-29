@@ -6,7 +6,9 @@ const {
   analyzeCentrality,
   getModuleInsights,
   expandUnit,
-  getUnitImpact
+  getUnitImpact,
+  analyzeGitChurn,
+  analyzePRImpact
 } = require('../services/analysisService');
 
 // POST /api/analysis/dependencies - Analyze file dependencies
@@ -119,6 +121,30 @@ router.post('/impact', async (req, res) => {
     res.json(impact);
   } catch (error) {
     console.error('Error getting unit impact:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/analysis/git/churn - Analyze historical hotspots
+router.post('/git/churn', async (req, res) => {
+  try {
+    const { path } = req.body;
+    if (!path) return res.status(400).json({ error: 'Repository path is required' });
+    const churn = await analyzeGitChurn(path);
+    res.json(churn);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/analysis/git/impact - Analyze PR diff impact
+router.post('/git/impact', async (req, res) => {
+  try {
+    const { path, baseBranch } = req.body;
+    if (!path) return res.status(400).json({ error: 'Repository path is required' });
+    const changedFiles = await analyzePRImpact(path, baseBranch || 'main');
+    res.json(changedFiles);
+  } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });

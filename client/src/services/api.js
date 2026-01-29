@@ -121,6 +121,17 @@ export const api = {
     return response.data;
   },
 
+  // Git Intelligence
+  async getGitChurn(path) {
+    const response = await client.post('/analysis/git/churn', { path });
+    return response.data;
+  },
+
+  async getPRImpact(path, baseBranch = 'main') {
+    const response = await client.post('/analysis/git/impact', { path, baseBranch });
+    return response.data;
+  },
+
   // Health check
   async healthCheck() {
     const response = await client.get('/health');

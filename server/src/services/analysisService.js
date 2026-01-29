@@ -1,5 +1,6 @@
 const fs = require('fs').promises;
 const path = require('path');
+const simpleGit = require('simple-git');
 const { getCodeFiles } = require('./repositoryService');
 const semanticLayerEngine = require('./semanticLayerEngine');
 
@@ -541,7 +542,39 @@ function resolveImport(sourceFile, importPath, normalizedAllFiles, normalizedFil
     return null;
   }
 
-  // Non-relative imports (bare specifiers)
+  // Handle aliases like @/ or ~/
+  let aliasedPath = importPath;
+  if (importPath.startsWith('@/')) {
+    aliasedPath = 'src/' + importPath.substring(2);
+  } else if (importPath.startsWith('~/')) {
+    aliasedPath = 'src/' + importPath.substring(2);
+  }
+
+  // Non-relative imports (bare specifiers) logic for aliased paths
+  // If it was aliased, we now treat it as a relative-ish path from root
+  if (aliasedPath !== importPath) {
+    const extensions = ['', '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '/index.js', '/index.ts', '/index.jsx', '/index.tsx', '.vue', '.svelte'];
+    // Try generic 'src' and specific client/server roots which act as alias bases
+    const aliasBases = ['', 'client/', 'server/', 'src/', 'client/src/', 'server/src/'];
+
+    // Remove 'src/' from aliased path if we are going to try prepending it again to avoid src/src
+    const rawPath = importPath.substring(2); // remove @/
+
+    for (const base of aliasBases) {
+      for (const ext of extensions) {
+        const candidate1 = base + rawPath + ext;
+        if (normalizedFilesSet.has(candidate1)) return candidate1;
+
+        // Check for index files explicitly if not covered
+        if (!candidate1.endsWith('index' + ext)) {
+          const candidate2 = base + rawPath + '/index' + ext;
+          if (normalizedFilesSet.has(candidate2)) return candidate2;
+        }
+      }
+    }
+  }
+
+  // Standard non-relative imports handling
   if (!importPath.includes('/')) {
     return null;
   }
@@ -550,12 +583,15 @@ function resolveImport(sourceFile, importPath, normalizedAllFiles, normalizedFil
   const candidates = [];
   const base = importPath.replace(/^\/+/, '');
   const exts = ['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.vue', '.svelte'];
+
+  // 1. Exact match attempt
   candidates.push(base);
   for (const e of exts) candidates.push(base + e);
   for (const e of exts) candidates.push(base + '/index' + e);
   candidates.push(base + '/index.js');
 
-  const prefixes = ['src/', 'app/', 'lib/'];
+  // 2. Try simpler prefixes
+  const prefixes = ['src/', 'app/', 'lib/', 'client/src/', 'server/src/']; // Added client/server src
   for (const p of prefixes) {
     candidates.push(p + base);
     for (const e of exts) candidates.push(p + base + e);
@@ -566,22 +602,22 @@ function resolveImport(sourceFile, importPath, normalizedAllFiles, normalizedFil
     if (normalizedFilesSet.has(cand)) return cand;
   }
 
-  // Try suffix matching as fallback (least optimized part, but less frequent)
-  for (const f of normalizedAllFiles) {
-    for (const cand of candidates) {
-      if (f.endsWith(cand)) return f;
-    }
-  }
+  // Try suffix matching as fallback (RESTRICTED: Only if path implies uniqueness)
+  // Removed global suffix matching which causes false positives (e.g. 'utils' matching 'src/utils' and 'lib/utils')
 
   // As a fallback, try matching by final segment/class name
+  // RESTRICTED: Only if the name is unique in the entire repo to avoid 'config.js' collisions
   const finalSegment = base.split('/').pop();
-  if (finalSegment && finalSegment.length > 1) {
-    for (const f of normalizedAllFiles) {
+  if (finalSegment && finalSegment.length > 5) { // Only do this for reasonably unique names
+    const matches = normalizedAllFiles.filter(f => {
       const fileName = f.split('/').pop();
-      if (!fileName) continue;
+      if (!fileName) return false;
       const nameNoExt = fileName.replace(/\.[^/.]+$/, '');
-      if (nameNoExt === finalSegment) return f;
-    }
+      return nameNoExt === finalSegment;
+    });
+
+    // Only return if exactly one match found (safe fallback)
+    if (matches.length === 1) return matches[0];
   }
 
   return null;
@@ -913,5 +949,56 @@ module.exports = {
   analyzeCentrality,
   getModuleInsights,
   expandUnit,
-  getUnitImpact
+  getUnitImpact,
+  analyzeGitChurn,
+  analyzePRImpact
 };
+
+/**
+ * Analyze git modification frequency per file (Hotspots)
+ */
+async function analyzeGitChurn(repoPath) {
+  await validateRepoPath(repoPath);
+  const git = simpleGit(repoPath);
+
+  try {
+    // Get list of all files with their modification count
+    // This gives us the "heat" of each file based on its history
+    const log = await git.raw(['log', '--name-only', '--pretty=format:']);
+    const lines = log.split('\n').filter(Boolean);
+
+    const churnMap = {};
+    for (const line of lines) {
+      const normalized = normalizeToForward(line.trim());
+      churnMap[normalized] = (churnMap[normalized] || 0) + 1;
+    }
+
+    return churnMap;
+  } catch (error) {
+    console.warn('[Git] Failed to fetch churn data:', error.message);
+    return {};
+  }
+}
+
+/**
+ * Analyze PR impact based on current diff vs main (Risk prediction)
+ */
+async function analyzePRImpact(repoPath, baseBranch = 'main') {
+  await validateRepoPath(repoPath);
+  const git = simpleGit(repoPath);
+
+  try {
+    // Get list of files changed between current HEAD and baseBranch
+    const diff = await git.raw(['diff', '--name-only', baseBranch]);
+    const changedFiles = diff.split('\n').filter(Boolean).map(normalizeToForward);
+
+    return changedFiles;
+  } catch (error) {
+    console.warn('[Git] Failed to fetch PR diff for branch:', baseBranch, error.message);
+    // Silent fallback to 'master' if 'main' is not found
+    if (baseBranch === 'main') {
+      return analyzePRImpact(repoPath, 'master');
+    }
+    return [];
+  }
+}

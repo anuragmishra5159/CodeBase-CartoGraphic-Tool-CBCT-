@@ -77,77 +77,45 @@ CBCT features an **adaptive visualization system** that automatically adjusts to
 - **Performance Optimized**: Safety limits prevent UI overload
 - **Risk Detection**: Identifies circular dependencies, high-impact units, and potential issues
 
-📚 **[Read the Semantic Layer Guide](./SEMANTIC_LAYER_GUIDE.md)** | **[Quick Reference](./SEMANTIC_LAYER_QUICK_REF.md)**
+### ⚡ Advanced Developer Workflow (NEW!)
 
-### View Modes
+CBCT transforms from a static map to a **proactive engineering cockpit**:
 
-1. **Dependencies** - Visualize file imports and connections
-2. **Complexity** - See code density and size distribution
-3. **Centrality** - Identify hub modules and architectural gravity
+- **IDE Sync**: Click the External Link icon to instantly jump to the source in **VS Code**.
+- **Pathfinding**: High-speed BFS traces the **shortest dependency chain** between any two units via `Ctrl + Click`.
+- **Git Intelligence**:
+    - **Churn Hotspots**: Pulsing **Heat Auras** highlight files with high historical volatility.
+    - **PR Impact Mode**: Neon highlighters show what’s changed in your current branch vs `main`.
+- **Architectural Guardrails**: Define forbidden boundaries (e.g., UI → DB) and get **visual alerts** on violations.
 
-### Services Provided
+📚 **[Semantic Layer Guide](./SEMANTIC_LAYER_GUIDE.md)** | **[Technical Architecture](./ARCHITECTURE.md)** | **[Development Guide](./DEVELOPMENT.md)**
 
-- **Structural Awareness** - What modules exist? How are they connected?
-- **Cognitive Onboarding** - Where should I start? What matters most?
-- **Architectural Intuition** - Notice tight coupling, hub modules, chokepoints
-- **Shared Understanding** - Neutral visual reference for team discussions
-- **Impact Analysis** - Understand what will be affected by changes
+## 📁 Project Structure
+
+```
+cbct/
+├── client/                 # React frontend
+│   ├── src/
+│   │   ├── components/     # UI components
+│   │   ├── services/       # API client & state management
+│   │   └── store/          # Zustand store
+├── server/                 # Node.js backend
+│   ├── src/
+│   │   ├── routes/         # API routes
+│   │   └── services/       # Analysis & Semantic engines
+└── package.json            # Workspace root
+```
 
 ## 🛠️ Tech Stack
 
-**Frontend:**
-- React 18
-- Vite
-- Tailwind CSS
-- react-force-graph-2d (D3-based graph visualization)
-- Zustand (state management)
-- Lucide React (icons)
-
-**Backend:**
-- Node.js
-- Express
-- glob (file discovery)
-- simple-git (Git integration)
-
-## 📡 API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/repository/scan` | POST | Scan a repository |
-| `/api/repository/tree` | GET | Get file tree structure |
-| `/api/analysis/dependencies` | POST | Analyze file dependencies (with semantic layers) |
-| `/api/analysis/complexity` | POST | Analyze code complexity |
-| `/api/analysis/centrality` | POST | Analyze module centrality |
-| `/api/analysis/insights/:nodeId` | GET | Get insights for a specific node |
-| `/api/analysis/expand` | POST | Expand a unit to show internals (Layer 2+) |
-| `/api/analysis/impact` | POST | Get impact chain for a unit (Layer 3) |
+**Frontend:** React 18, Vite, Tailwind CSS, react-force-graph-2d, Zustand, Lucide React.
+**Backend:** Node.js, Express, simple-git, glob.
 
 ## 🎨 Design Principles
 
-CBCT follows strict interaction invariants:
-
-- No insight is shown without explicit user intent
-- All insights are descriptive, short, contextual, and non-judgmental
-- The UI remains passive until engaged
-- AI (when added) functions strictly as a pattern narrator
-
-## 🔮 Roadmap
-
-**V1 (Current)**
-- Single-language support (JavaScript/TypeScript)
-- Static and live mapping
-- Hover-based insights
-- Read-only visualization
-
-**Future**
-- Multi-language adapters
-- Drift timelines
-- Shared maps
-- Learning modes
-
-## 📝 Core Identity
-
-> CBCT exists to help developers think clearly before they write confident code—by revealing what their system is, not telling them what it should be.
+- No insight is shown without explicit user intent.
+- Highlights are descriptive, not judgmental.
+- Real-time metabolic signals (Churn) reveal the living system.
 
 ---
 
